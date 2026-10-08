@@ -48,15 +48,134 @@ export function splitSentences(text) {
   return splitOnce(text).flatMap(s => (s.length > max ? chop(s, max) : [s]));
 }
 
-export function pickVoice(voices, lang) {
-  const list = voices || [];
-  const norm = v => String(v.lang || '').toLowerCase().replace('_', '-');
-  const prefs = lang.startsWith('zh') ? ['zh-cn', 'zh-hans', 'zh-tw', 'zh-hk', 'zh'] : ['en-us', 'en-gb', 'en'];
-  for (const p of prefs) {
-    const v = list.find(v => norm(v).startsWith(p));
-    if (v) return v;
+export function voiceId(v) { return (v && (v.voiceURI || v.name)) || ''; }
+
+function langFamily(lang) {
+  const l = String(lang || '').toLowerCase().replace(/_/g, '-');
+  if (l.startsWith('zh')) return 'zh';
+  if (l.startsWith('en')) return 'en';
+  return '';
+}
+
+export function voicesFor(voices, lang) {
+  const want = String(lang || '').startsWith('zh') ? 'zh' : 'en';
+  return (voices || []).filter(v => langFamily(v.lang) === want);
+}
+
+function scoreVoice(v, lang) {
+  const name = String(v.name || '');
+  const l = String(v.lang || '').toLowerCase().replace(/_/g, '-');
+  let s = v.localService ? 10 : 0;
+  if (/compact/i.test(name)) s -= 60;
+  if (/novelty|bad news|bells|boing|bubbles|zarvox|trinoids|whisper/i.test(name)) s -= 80;
+  if (String(lang).startsWith('zh')) {
+    if (l.startsWith('zh-cn') || l.startsWith('zh-hans')) s += 20;
+    else if (l.startsWith('zh-tw') || l.startsWith('zh-hk') || l.includes('yue')) s += 4;
+    else if (l.startsWith('zh')) s += 8;
+    if (/siri/i.test(name)) s += 100;
+    if (/语舒|yu[-\s]?shu|yushu/i.test(name)) s += 110;
+    if (/李牧|li[-\s]?mu/i.test(name)) s += 70;
+    if (/premium/i.test(name)) s += 60;
+    if (/enhanced|增强/i.test(name)) s += 50;
+    if (/婷婷|ting-?ting/i.test(name) && !/enhanced|premium|增强/i.test(name)) s += 15;
+  } else {
+    if (l.startsWith('en-us')) s += 20;
+    else if (l.startsWith('en-gb')) s += 12;
+    else if (l.startsWith('en')) s += 6;
+    if (/siri/i.test(name)) s += 96;
+    if (/samantha/i.test(name) && /enhanced|premium/i.test(name)) s += 100;
+    else if (/\bava\b/i.test(name)) s += 94;
+    else if (/allison/i.test(name)) s += 90;
+    else if (/nicky/i.test(name)) s += 86;
+    else if (/samantha/i.test(name)) s += 30;
+    if (/premium/i.test(name) && !/samantha/i.test(name)) s += 55;
+    if (/enhanced/i.test(name) && !/samantha/i.test(name)) s += 45;
   }
-  return null;
+  return s;
+}
+
+export function rankedVoices(voices, lang) {
+  return voicesFor(voices, lang).slice().sort((a, b) => scoreVoice(b, lang) - scoreVoice(a, lang) || String(a.name || '').localeCompare(String(b.name || ''), 'zh'));
+}
+
+export function pickVoice(voices, lang, savedId) {
+  const list = voicesFor(voices, lang);
+  if (savedId) {
+    const hit = list.find(v => voiceId(v) === savedId);
+    if (hit) return hit;
+  }
+  return rankedVoices(voices, lang)[0] || null;
+}
+
+export function voiceLabel(v) {
+  const name = String(v.name || '语音');
+  const lang = String(v.lang || '').toLowerCase().replace(/_/g, '-');
+  let who = name;
+  if (/语舒|yu[-\s]?shu|yushu/i.test(name)) who = '语舒';
+  else if (/婷婷|ting-?ting/i.test(name)) who = '婷婷';
+  else if (/善怡|sinji/i.test(name)) who = '善怡';
+  else if (/美佳|meijia/i.test(name)) who = '美佳';
+  else if (/李牧|li[-\s]?mu/i.test(name)) who = '李牧';
+  else if (/samantha/i.test(name)) who = 'Samantha';
+  else if (/\bava\b/i.test(name)) who = 'Ava';
+  else if (/allison/i.test(name)) who = 'Allison';
+  else if (/nicky/i.test(name)) who = 'Nicky';
+  else if (/siri/i.test(name)) who = 'Siri';
+  let qual = '';
+  if (/premium|高品质/i.test(name)) qual = '高品质';
+  else if (/enhanced|增强/i.test(name)) qual = '增强';
+  else if (/compact/i.test(name)) qual = '精简';
+  else if (v.localService) qual = '本机';
+  let region = '';
+  if (lang.startsWith('zh-cn') || lang.startsWith('zh-hans')) region = '普通话';
+  else if (lang.startsWith('zh-tw') || lang.includes('hant')) region = '台湾';
+  else if (lang.startsWith('zh-hk') || lang.startsWith('zh-yue')) region = '粤语';
+  else if (lang.startsWith('en-us')) region = '美式英语';
+  else if (lang.startsWith('en-gb')) region = '英式英语';
+  else if (lang.startsWith('en')) region = '英语';
+  else if (lang.startsWith('zh')) region = '中文';
+  return [who, qual, region].filter(Boolean).join(' · ');
+}
+
+export function voiceNote(count, lang) {
+  if (count !== 1) return '';
+  if (String(lang).startsWith('zh')) return '这台设备只有这一种中文语音。想更好听，可在「设置 → 辅助功能 → 朗读内容 → 语音」里下载增强音质。';
+  return '这台设备只有这一种英文语音。';
+}
+
+export function whenVoices(synth, timeout = 1500) {
+  let list = [];
+  try { list = synth && synth.getVoices ? synth.getVoices() : []; } catch (e) {}
+  if (list && list.length) return Promise.resolve(list);
+  return new Promise(resolve => {
+    let done = false;
+    const finish = () => {
+      if (done) return;
+      let v = [];
+      try { v = synth.getVoices ? synth.getVoices() : []; } catch (e) {}
+      if (!v.length) return;
+      done = true;
+      cleanup();
+      resolve(v);
+    };
+    const on = () => finish();
+    try { synth.addEventListener && synth.addEventListener('voiceschanged', on); } catch (e) {}
+    const prev = synth.onvoiceschanged;
+    synth.onvoiceschanged = (...a) => { try { prev && prev.apply(synth, a); } catch (e) {} finish(); };
+    const t = setTimeout(() => {
+      if (done) return;
+      done = true;
+      cleanup();
+      let v = [];
+      try { v = synth.getVoices ? synth.getVoices() : []; } catch (e) {}
+      resolve(v);
+    }, timeout);
+    if (t.unref) t.unref();
+    function cleanup() {
+      clearTimeout(t);
+      try { synth.removeEventListener && synth.removeEventListener('voiceschanged', on); } catch (e) {}
+    }
+  });
 }
 
 export function speakableBlocks(blocks) {
@@ -85,6 +204,9 @@ export class Speaker {
     this._spokeAt = 0;
     this._retries = 0;
     this._watch = null;
+    this._wait = 0;
+    this._voicesReady = false;
+    this.voiceIds = { 'zh-CN': '', 'en-US': '' };
   }
   setBlocks(blocks, startId) {
     this.blocks = speakableBlocks(blocks);
@@ -113,6 +235,12 @@ export class Speaker {
     if (this.state === 'playing') { this._cancel(); this._speak(); }
     else this._emit();
   }
+  setVoice(lang, id) {
+    const key = String(lang).startsWith('zh') ? 'zh-CN' : 'en-US';
+    this.voiceIds[key] = id || '';
+    if (this.state === 'playing') { this._cancel(); this._speak(); }
+    else this._emit();
+  }
   stop() {
     this._cancel();
     this._disarm();
@@ -138,6 +266,20 @@ export class Speaker {
     if (this.si >= this.sents.length) this.si = 0;
   }
   _speak() {
+    let voices = [];
+    try { voices = this.synth.getVoices ? this.synth.getVoices() : []; } catch (e) {}
+    if ((voices && voices.length) || this._voicesReady) { this._voicesReady = true; this._utter(voices || []); return; }
+    const ticket = ++this._wait;
+    this.state = 'playing';
+    this._pending = true;
+    this._emit();
+    whenVoices(this.synth).then(v => {
+      if (ticket !== this._wait || this.state !== 'playing') return;
+      this._voicesReady = true;
+      this._utter(v || []);
+    });
+  }
+  _utter(voices) {
     const text = this.sents[this.si];
     if (!text) { this._advance(); return; }
     const lang = detectLang(text);
@@ -145,7 +287,7 @@ export class Speaker {
     try { u = new this.U(text); } catch (e) { this.state = 'idle'; this._emit(); return; }
     u.lang = lang;
     u.rate = this.rate;
-    try { const v = pickVoice(this.synth.getVoices ? this.synth.getVoices() : [], lang); if (v) u.voice = v; } catch (e) {}
+    try { const v = pickVoice(voices, lang, this.voiceIds[lang]); if (v) u.voice = v; } catch (e) {}
     const gen = ++this._gen;
     this._pending = true;
     this._spokeAt = Date.now();
@@ -163,6 +305,7 @@ export class Speaker {
   }
   _cancel() {
     this._gen++;
+    this._wait++;
     this._pending = false;
     try { this.synth.cancel(); } catch (e) {}
   }

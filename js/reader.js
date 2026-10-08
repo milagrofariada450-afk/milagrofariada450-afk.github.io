@@ -2,7 +2,7 @@
 import * as db from './db.js';
 import * as ai from './ai.js';
 import { extractReflow, REFLOW_VERSION } from './reflow.js';
-import { Speaker, RATES, speakableBlocks } from './tts.js';
+import { Speaker, RATES, speakableBlocks, whenVoices, rankedVoices, pickVoice, voiceId, voiceLabel, voiceNote } from './tts.js';
 import { loadPdf, renderCrop, PdfView, selectionToPdf, closePdf } from './pdfview.js';
 import { ic, $, esc, phone, CN, COLORS, toast, ago, uid, ST, saveST, applyTheme, effTheme, openSheet, redrawSheet, closeSheet, sheetOpen, download, copyText, safeName } from './util.js';
 import { LIB, savePaper, renderTab, switchTab, openPaperSheet } from './app.js';
@@ -821,6 +821,9 @@ function ensureSpeaker() {
   try { speechSynthesis.getVoices(); } catch (e) {}
   speaker = new Speaker(speechSynthesis, SpeechSynthesisUtterance);
   speaker.rate = RATES.includes(+ST.ttsRate) ? +ST.ttsRate : 1;
+  speaker.voiceIds['zh-CN'] = ST.ttsVoiceZh || '';
+  speaker.voiceIds['en-US'] = ST.ttsVoiceEn || '';
+  whenVoices(speechSynthesis);
   speaker.onchange = () => { paintTts(); if (R) renderToolbar(); };
   return speaker;
 }
@@ -842,17 +845,51 @@ function toggleTts() {
   if (!sp.start()) toast('从这里没有可以朗读的文字');
 }
 function stopTts() { if (speaker && speaker.state !== 'idle') speaker.stop(); else paintTts(); }
-function openRate() {
-  if (!speaker) return;
+function rateSheet(voices) {
   const cur = speaker.rate;
   const labels = { 0.75: '稍慢', 1: '正常', 1.25: '稍快', 1.5: '较快' };
-  openSheet(`<h3>朗读速度</h3><div class="list">${RATES.map(r => `<div class="li" data-rate="${r}"><span class="lt">${r}× · ${labels[r]}</span>${r === cur ? '<span class="lv">当前</span>' : ''}</div>`).join('')}</div>`, sh => {
+  const rates = `<div class="sec-head" style="padding:4px 0"><b>语速</b></div><div class="list">${RATES.map(r => `<div class="li" data-rate="${r}"><span class="lt">${r}× · ${labels[r]}</span>${r === cur ? '<span class="lv">当前</span>' : ''}</div>`).join('')}</div>`;
+  const group = (lang, title) => {
+    const list = rankedVoices(voices, lang);
+    const chosen = pickVoice(voices, lang, speaker.voiceIds[lang]);
+    const cid = chosen ? voiceId(chosen) : '';
+    const note = list.length === 1
+      ? `<div class="help" style="font-size:12px;color:var(--text2);margin:6px 0 8px">${esc(voiceNote(1, lang))}</div>`
+      : list.length === 0
+        ? `<div class="help" style="font-size:12px;color:var(--text2);margin:6px 0 8px">没有检测到${lang.startsWith('zh') ? '中文' : '英文'}语音，将使用系统默认。</div>`
+        : '';
+    const rows = list.map(v => {
+      const id = voiceId(v);
+      return `<div class="li" data-voice="${esc(id)}" data-vlang="${lang}"><span class="lt">${esc(voiceLabel(v))}</span>${id === cid ? '<span class="lv">当前</span>' : ''}</div>`;
+    }).join('');
+    return `<div class="sec-head" style="padding:14px 0 4px"><b>${title}</b></div>${note}<div class="list">${rows}</div>`;
+  };
+  return `<h3>朗读</h3>${rates}${group('zh-CN', '中文声音')}${group('en-US', '英文声音')}`;
+}
+async function openRate() {
+  if (!speaker) return;
+  let voices = [];
+  try { voices = await whenVoices(speechSynthesis); } catch (e) {}
+  const paint = () => rateSheet(voices);
+  openSheet(paint(), sh => {
     sh.onclick = e => {
-      const li = e.target.closest('[data-rate]'); if (!li || !speaker) return;
-      const r = +li.dataset.rate;
-      ST.ttsRate = r; saveST();
-      speaker.setRate(r);
-      closeSheet();
+      if (!speaker) return;
+      const rate = e.target.closest('[data-rate]');
+      if (rate) {
+        const r = +rate.dataset.rate;
+        ST.ttsRate = r; saveST();
+        speaker.setRate(r);
+        closeSheet();
+        return;
+      }
+      const voice = e.target.closest('[data-voice]');
+      if (!voice) return;
+      const lang = voice.dataset.vlang;
+      const id = voice.dataset.voice;
+      if (lang.startsWith('zh')) ST.ttsVoiceZh = id; else ST.ttsVoiceEn = id;
+      saveST();
+      speaker.setVoice(lang, id);
+      redrawSheet(paint());
     };
   });
 }
