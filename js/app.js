@@ -380,34 +380,56 @@ $('#v-me').addEventListener('click', async e => {
       <br><br>添加后可以全屏使用、离线打开，浏览器也更不容易清理本地数据。</div>`);
     return;
   }
-  if (e.target.closest('[data-update]')) {
-    const reg = await navigator.serviceWorker?.getRegistration?.();
-    if (!reg) return toast('离线功能尚未启用');
-    toast('正在检查更新…'); await reg.update().catch(() => {});
-    setTimeout(() => { if (!reg.waiting && !reg.installing) toast('已是最新版本'); }, 1500);
-  }
+  if (e.target.closest('[data-update]')) { await checkForUpdate(); return; }
 });
 
 /* ---------- Service Worker ---------- */
-let wantReload = false;
-function showUpdateBar(reg) {
-  if (document.querySelector('.update-bar')) return;
-  const bar = document.createElement('div'); bar.className = 'update-bar';
-  bar.innerHTML = `${ic('refresh', 'sm')}<span>新版本已就绪</span><button>立即刷新</button>`;
-  bar.querySelector('button').onclick = () => { wantReload = true; if (reg.waiting) reg.waiting.postMessage('skipWaiting'); else location.reload(); };
-  phone.appendChild(bar);
+const SW_RELOAD = 'yandu-reloaded';
+function reloadForUpdate() {
+  if (sessionStorage.getItem(SW_RELOAD) === '1') return;
+  sessionStorage.setItem(SW_RELOAD, '1');
+  location.reload();
+}
+function waitWorker(w, ms) {
+  return new Promise(resolve => {
+    if (!w || w.state === 'installed' || w.state === 'activated' || w.state === 'redundant') return resolve(w);
+    const done = () => { clearTimeout(t); resolve(w); };
+    const t = setTimeout(done, ms);
+    w.addEventListener('statechange', () => {
+      if (w.state === 'installed' || w.state === 'activated' || w.state === 'redundant') done();
+    });
+  });
+}
+async function checkForUpdate() {
+  const reg = await navigator.serviceWorker?.getRegistration?.();
+  if (!reg) return toast('离线功能尚未启用');
+  toast('正在检查更新…');
+  const before = reg.active || null;
+  try { await reg.update(); }
+  catch (e) { return toast('检查更新失败，请稍后再试'); }
+  const w = reg.installing || reg.waiting;
+  if (w) await waitWorker(w, 20000);
+  if (reg.waiting) { reg.waiting.postMessage('skipWaiting'); return toast('正在切换到新版本…'); }
+  if (reg.installing) return toast('仍在下载新版本，请稍后再试');
+  if (w && w.state === 'redundant' && reg.active === before) return toast('更新没有完成，请稍后再试');
+  if (reg.active && reg.active !== before) return toast('正在切换到新版本…');
+  toast('已是最新版本');
 }
 if ('serviceWorker' in navigator && location.protocol !== 'file:') {
+  const hadController = !!navigator.serviceWorker.controller;
+  let reloading = false;
+  navigator.serviceWorker.addEventListener('controllerchange', () => {
+    // 第一次安装时页面本来就是刚从网络拿到的，不必刷新；之后每次换 worker 自动刷新一次
+    if (!hadController || reloading) return;
+    reloading = true;
+    reloadForUpdate();
+  });
   window.addEventListener('load', async () => {
+    sessionStorage.removeItem(SW_RELOAD);
     try {
       const reg = await navigator.serviceWorker.register('sw.js'); if (!reg) return;
-      if (reg.waiting && navigator.serviceWorker.controller) showUpdateBar(reg);
-      reg.addEventListener('updatefound', () => {
-        const w = reg.installing; if (!w) return;
-        w.addEventListener('statechange', () => { if (w.state === 'installed' && navigator.serviceWorker.controller) showUpdateBar(reg); });
-      });
-      let reloading = false;
-      navigator.serviceWorker.addEventListener('controllerchange', () => { if (reloading || !wantReload) return; reloading = true; location.reload(); });
+      await reg.update().catch(() => {});
+      if (reg.waiting && hadController) reg.waiting.postMessage('skipWaiting');
     } catch (e) { console.warn('SW 注册失败', e); }
   });
 }
