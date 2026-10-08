@@ -5,7 +5,7 @@ body.wide{background:#DCDAD4}
 body.wide #phone{max-width:520px;box-shadow:0 0 0 .5px rgba(0,0,0,.08),0 10px 50px rgba(0,0,0,.18)}
 #stage{position:relative;flex:1;overflow:hidden}
 .tabview{top:var(--safe-top)}
-#v-reader{padding-top:var(--safe-top)}
+#v-reader{padding-top:calc(54px + var(--safe-top))}
 .sheet{max-height:calc(88% - var(--safe-top))}
 html,body{overscroll-behavior:none}
 .hidden{display:none!important}
@@ -143,8 +143,6 @@ html,body{overscroll-behavior:none}
 #statusfill{position:fixed;top:0;left:0;right:0;height:var(--safe-top);background:var(--top-bg,var(--bg));z-index:65;pointer-events:none}
 body.wide #statusfill{display:none}
 .r-head,.r-toolbar,.r-trans{background:var(--rbg);opacity:1;-webkit-backdrop-filter:none;backdrop-filter:none}
-#v-reader::before{content:"";position:absolute;left:0;right:0;top:0;height:var(--safe-top);background:var(--rbg);z-index:4}
-.r-head{z-index:5}
 .article h3.cjk{font-style:normal}
 /* 收起的弹层完全移出屏幕，阴影不再渗到底栏上（之前底部会有一层灰雾） */
 .sheet{transform:translateY(calc(100% + 60px))}

@@ -105,11 +105,12 @@ svg.i.sm{width:18px;height:18px} svg.i.xs{width:15px;height:15px}
 /* ---------- reader ---------- */
 #v-reader{position:absolute;inset:0;background:var(--rbg);color:var(--rtext);display:flex;flex-direction:column;transform:translateX(102%);transition:transform .32s cubic-bezier(.3,.7,.2,1);z-index:20}
 #v-reader.open{transform:none}
-.r-head{flex:none;height:54px;display:flex;align-items:center;gap:4px;padding:0 8px 0 4px;background:var(--rbg);border-bottom:.5px solid var(--rline);position:relative;z-index:3}
+.r-head{position:fixed;top:0;left:0;right:0;height:calc(54px + var(--safe-top));display:flex;align-items:center;gap:4px;padding:var(--safe-top) 8px 0 4px;background:var(--rbg);border-bottom:.5px solid var(--rline);z-index:30;opacity:1;filter:none;transform:none;-webkit-backdrop-filter:none;backdrop-filter:none}
+body.wide .r-head{left:calc(50% - 260px);width:520px;right:auto}
 .r-head .icon-btn{color:var(--rtext)}
-.r-title{flex:1;min-width:0;line-height:1.2}
-.r-title .t{font-size:14.5px;font-weight:600;color:var(--rtext);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.r-title .s{font-size:11.5px;color:var(--rtext2);margin-top:2px}
+.r-title{flex:1;min-width:0;line-height:1.25;opacity:1;filter:none;transform:none}
+.r-title .t{font-size:15px;font-weight:600;color:var(--rtext);-webkit-text-fill-color:currentColor;opacity:1;filter:none;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.r-title .s{font-size:12px;font-weight:500;color:var(--rtext);-webkit-text-fill-color:currentColor;opacity:1;filter:none;margin-top:1px}
 .seg{display:inline-flex;padding:2px;border-radius:9px;background:var(--rcard);flex:none}
 .seg button{height:28px;padding:0 10px;border-radius:7px;font-size:12.5px;color:var(--rtext2);font-weight:500;white-space:nowrap}
 .seg button.on{background:var(--rbg);color:var(--rtext);box-shadow:0 1px 3px rgba(0,0,0,.12)}
