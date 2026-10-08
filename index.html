@@ -18,10 +18,12 @@
 <link rel="stylesheet" href="css/app.css">
 <script>
   // 尽早应用主题，避免闪烁
-  (function(){try{var s=JSON.parse(localStorage.getItem('yandu.settings')||'{}');var t=s.theme||'auto';if(t==='auto')t=matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';document.documentElement.dataset.theme=t;}catch(e){}})();
+  (function(){try{var s=JSON.parse(localStorage.getItem('yandu.settings')||'{}');var t=s.theme||'auto';if(t==='auto')t=matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';document.documentElement.dataset.theme=t;document.documentElement.style.setProperty('--top-bg',t==='dark'?'#111214':'#F5F4F0');}catch(e){}})();
 </script>
 </head>
 <body>
+<!-- iOS 27 起，主屏 Web App 会在状态栏下方叠加一层模糊；顶部放一个固定定位的纯色条，状态栏即变为纯色且不再模糊内容 -->
+<div id="statusfill" aria-hidden="true"></div>
 <div id="phone">
   <div id="stage">
     <section id="v-library" class="tabview active"></section>

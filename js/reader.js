@@ -139,6 +139,9 @@ function blockAtView(offset = 60) {
   const el = els[ans]; return el ? R.bmap[el.dataset.bid] || null : null;
 }
 async function setMode(m, target) {
+  // 切换模式时保持当前章节：记下当前目录项，切换后在新模式中"钉住"同名条目
+  const auto = !target;
+  let prevCur = null; try { prevCur = auto && R.ready ? currentTocItem(tocItems(R.mode)) : null; } catch (e) {}
   if (!target) {
     const b = blockAtView(16);
     if (R.mode === 'reflow' && m === 'pdf' && b) target = b.y != null ? { page: b.page, y: b.y } : { page: b.page, frac: 0 };
@@ -146,7 +149,13 @@ async function setMode(m, target) {
   }
   savePos(true);
   R.mode = m; R.p.lastMode = m; hideSel();
+  const r = R;
   await renderMode(false, target);
+  if (prevCur && R === r && R.mode === m) {
+    const list = tocItems(m);
+    const it = list.find(x => x.title === prevCur.title && x.page === prevCur.page) || list.find(x => x.title === prevCur.title);
+    if (it) { R.pin = { it, mode: m, st: body.scrollTop }; updateProgress(); }
+  }
 }
 async function renderMode(restore, target) {
   R.ios.forEach(o => o.disconnect()); R.ios = [];
@@ -245,7 +254,8 @@ function paraHTML(b) {
 }
 function headHTML(b) {
   const zh = (ST.trans === 'bi' || ST.trans === 'zh') ? `<small class="hzh" data-hz="${b.id}">${esc(R.tcache[b.id] || '')}</small>` : '';
-  return `<${b.type} class="blk" id="${b.id}" data-bid="${b.id}" data-head="1">${esc(b.text)}${zh}</${b.type}>`;
+  const cjk = /[\u4e00-\u9fff]/.test(b.text) ? ' cjk' : '';
+  return `<${b.type} class="blk${cjk}" id="${b.id}" data-bid="${b.id}" data-head="1">${esc(b.text)}${zh}</${b.type}>`;
 }
 function cropHTML(b) {
   const isEq = b.type === 'eq';
@@ -395,10 +405,21 @@ body.addEventListener('click', e => {
 
 /* ---------- 目录 / 显示 / 更多 ---------- */
 /* ---------- 目录 ---------- */
-const NUM_RE = /^((?:\d{1,2}(?:\.\d{1,2}){0,3})\.?|[IVX]{1,6}\.|[A-H]\.|[一二三四五六七八九十]{1,3}[、.．]|(?:Appendix|附录)\s+[A-Z0-9]+[.:]?)\s+(\S.*)$/;
-function splitNum(t) { t = t.replace(/\s+/g, ' ').trim(); const m = t.match(NUM_RE); return m ? [m[1].replace(/[.、．:]$/, ''), m[2]] : ['', t]; }
+const CJK_SP = /([\u3000-\u303f\u4e00-\u9fff\uff00-\uffef])\s+(?=[\u3000-\u303f\u4e00-\u9fff\uff00-\uffef])/g;
+const NUM_RE = /^(第\s*[0-9一二三四五六七八九十百]{1,4}\s*[章节篇部]|(?:\d{1,2}(?:\.\d{1,2}){0,3})\.?|[A-H](?:\.\d{1,2}){1,3}|[IVX]{1,6}\.|[A-H]\.|[一二三四五六七八九十]{1,3}[、.．]|(?:Appendix|附录)\s*[A-Z0-9]{1,2}[.:：]?)(?:\s+|(?=[\u4e00-\u9fff]))(\S.*)$/;
+function splitNum(t) {
+  t = t.replace(/\s+/g, ' ').trim().replace(CJK_SP, '$1');
+  const m = t.match(NUM_RE);
+  if (!m) return ['', t];
+  let n = m[1].replace(/[.、．:：]$/, '');
+  n = /^Appendix/i.test(n) ? n.replace(/\s+/g, ' ') : n.replace(/\s+/g, '').replace(/^附录(?=[A-Z0-9])/, '附录 ');
+  return [n, m[2]];
+}
 function levelOf(num, type) {
+  if (/^第.*[章篇部]$/.test(num)) return 1;
+  if (/^第.*节$/.test(num)) return 2;
   if (/^\d/.test(num)) return Math.min(3, num.split('.').length);
+  if (/^[A-H]\.\d/.test(num)) return Math.min(3, num.split('.').length);
   if (/^[IVX]+$/.test(num) || /^[一二三四五六七八九十]+$/.test(num) || /^(Appendix|附录)/.test(num)) return 1;
   if (/^[A-H]$/.test(num)) return 2;
   return type === 'h3' ? 2 : 1;
@@ -457,15 +478,36 @@ function blockAt(page, y) {
   if (y != null) { const b = onPage.find(b => b.y >= y - 6 && /^(h2|h3|p|caption|figure|eq|ref|small)$/.test(b.type)); if (b) return b; }
   return onPage[0] || R.blocks.find(b => b.page >= page) || null;
 }
+// 书签条目 → 重排块：优先匹配同页（或相邻页）标题文字相同的标题块，否则按坐标取块
+const normT = t => (t || '').toLowerCase().replace(/[\s.．、:：·]/g, '');
+function outlineBid(o) {
+  const key = normT(o.title).slice(0, 10);
+  if (key.length >= 2) {
+    const hs = R.blocks.filter(b => (b.type === 'h2' || b.type === 'h3') && Math.abs(b.page - o.page) <= 1 && b.text);
+    const hit = hs.find(b => b.page === o.page && normT(splitNum(b.text)[1]).startsWith(key)) || hs.find(b => normT(splitNum(b.text)[1]).startsWith(key));
+    if (hit) return hit.id;
+    // 标题未被识别为标题块时，找同页以该标题开头的短段落
+    const pb = R.blocks.find(b => b.page === o.page && b.text && b.text.length < 160 && (normT(b.text).startsWith(key) || normT(splitNum(b.text)[1]).startsWith(key)));
+    if (pb) return pb.id;
+  }
+  return (blockAt(o.page, o.y) || {}).id;
+}
 // 每种模式使用的目录项
 function tocItems(mode) {
   R._toc = R._toc || {};
   if (R._toc[mode]) return R._toc[mode];
   const heads = headingItems(); const ol = R.outline;
   let items;
-  if (mode === 'pdf') items = ol || heads;
-  else if (heads.length >= 2 || !ol) items = heads;
-  else items = ol.map(o => ({ ...o, bid: (blockAt(o.page, o.y) || {}).id }));
+  if (!ol) items = heads;
+  else {
+    // 书签：映射到重排块；书签标题没有编号时，借用正文标题里的编号（如"绪论" → "1 绪论"）
+    items = ol.map(o => {
+      const bid = outlineBid(o), it = { ...o, bid };
+      const hb = !o.num && bid && R.bmap[bid];
+      if (hb && /^h[23]$/.test(hb.type)) { const [n, t] = splitNum(hb.text); if (n && normT(t).startsWith(normT(o.title).slice(0, 6))) it.num = n; }
+      return it;
+    });
+  }
   return (R._toc[mode] = items);
 }
 function currentTocItem(items) {
@@ -473,6 +515,12 @@ function currentTocItem(items) {
   // 刚从目录跳转过来、尚未滚动时，以所选条目为当前章节（避免紧随其后的小节抢占）
   const pin = R.pin; if (pin && pin.mode === R.mode && Math.abs(body.scrollTop - pin.st) < 8 && items.includes(pin.it)) return pin.it;
   let cur = null;
+  // 两种模式都按阅读顺序判断（双栏 PDF 也准确，且切换模式时章节一致）
+  if (items.some(it => it.bid)) {
+    const b = blockAtView(24); if (!b) return null;
+    for (const it of items) { const hb = it.bid && R.bmap[it.bid]; if (hb && hb.idx <= b.idx) cur = it; }
+    return cur;
+  }
   if (R.mode === 'reflow') {
     const b = blockAtView(24); if (!b) return null;
     for (const it of items) { const hb = it.bid && R.bmap[it.bid]; if (hb && hb.idx <= b.idx) cur = it; }
@@ -482,53 +530,33 @@ function currentTocItem(items) {
   }
   return cur;
 }
-function figureItems() {
-  const out = [];
-  R.blocks.forEach((b, i) => {
-    if (b.type !== 'caption') return;
-    const m = b.text.match(/^(fig\.?|figure|table|tab\.|图|表)\s*([0-9IVX]+[a-z]?)[.:|：]?\s*(.*)$/i);
-    const isTab = m && /^(table|tab|表)/i.test(m[1]);
-    const prev = R.blocks[i - 1], next = R.blocks[i + 1];
-    const fig = (prev && prev.type === 'figure' && prev.page === b.page) ? prev : (next && next.type === 'figure' && next.page === b.page) ? next : null;
-    const tgt = fig || b;
-    out.push({ label: m ? `${isTab ? '表' : '图'} ${m[2]}` : '图表', title: ((t => t.length > 90 ? t.slice(0, 88) + '…' : t)(m ? m[3] : b.text)), page: b.page, y: tgt.y, bid: tgt.id, isTab });
-  });
-  return out;
-}
-function refsItem(items) {
-  const h = headingItems().find(x => /^(references|bibliography|参考文献|literature cited)/i.test(x.title));
-  if (h) return h;
-  const o = (R.outline || []).find(x => /^(references|bibliography|参考文献)/i.test(x.title));
-  if (o) return { ...o, bid: (blockAt(o.page, o.y) || {}).id };
+function refsItem() {
+  const RX = /^(references|bibliography|literature cited|参考文献|主要参考文献)$/i;
+  const pick = list => { const c = list.filter(x => RX.test((x.title || '').trim())); return c.find(x => !x.num && x.level === 1) || c.find(x => !x.num) || c.find(x => x.level === 1) || null; };
+  const it = pick(tocItems(R.mode)) || pick(headingItems());
+  if (it) return it.bid || R.mode === 'pdf' ? it : { ...it, bid: (blockAt(it.page, it.y) || {}).id };
   const rb = R.blocks.find(b => b.type === 'ref');
   return rb ? { title: '参考文献', page: rb.page, y: rb.y, bid: rb.id } : null;
 }
-let tocTab = 'sec';
 async function openToc() {
   if (!R || !R.ready) return;
   if (R.outline === undefined) await loadOutline();
   const r = R;
   const items = tocItems(R.mode); const cur = currentTocItem(items);
-  const figs = figureItems(); const refs = refsItem();
+  const refs = refsItem();
   const src = items.length && items[0].src === 'outline' ? 'PDF 书签' : '自动识别';
-  if (tocTab === 'fig' && !figs.length) tocTab = 'sec';
-  const draw = () => `<div class="toc-head"><h3>目录 <small>${items.length ? `${src} · ${items.length} 项` : ''}${R.mode === 'pdf' ? ' · 原版' : ' · 重排'}</small></h3>
-     <div class="toc-tools">${figs.length ? `<div class="mini-seg"><button data-tt="sec" class="${tocTab === 'sec' ? 'on' : ''}">章节</button><button data-tt="fig" class="${tocTab === 'fig' ? 'on' : ''}">图表 ${figs.length}</button></div>` : ''}
-       <span class="grow"></span><button class="chip" data-go="top">↑ 开头</button>${refs ? '<button class="chip" data-go="refs">参考文献</button>' : ''}</div></div>
-     ${tocTab === 'sec'
-      ? (items.length ? `<div class="list toc">${items.map((it, i) => `<div class="li lv${it.level} ${it === cur ? 'on' : ''}" data-i="${i}">${it.num ? `<span class="num">${esc(it.num)}</span>` : ''}<span class="lt">${esc(it.title)}</span><span class="lv">${it.page}</span></div>`).join('')}</div>`
-        : '<div class="empty">没有找到章节标题<br><span style="font-size:12px">这篇 PDF 既没有书签，也没能自动识别出标题</span></div>')
-      : `<div class="list toc">${figs.map((f, i) => `<div class="li" data-f="${i}"><span class="num fig">${esc(f.label)}</span><span class="lt">${esc(f.title)}</span><span class="lv">${f.page}</span></div>`).join('')}</div>`}`;
-  openSheet(draw(), sh => {
+  const html = `<div class="toc-head"><h3>目录 <small>${items.length ? `${src} · ${items.length} 项` : ''}${R.mode === 'pdf' ? ' · 原版' : ' · 重排'}</small></h3>
+     <div class="toc-tools"><span class="grow"></span><button class="chip" data-go="top">↑ 开头</button>${refs ? '<button class="chip" data-go="refs">参考文献</button>' : ''}</div></div>
+     ${items.length ? `<div class="list toc">${items.map((it, i) => `<div class="li lv${it.level} ${it === cur ? 'on' : ''}" data-i="${i}">${it.num ? `<span class="num">${esc(it.num)}</span>` : ''}<span class="lt">${esc(it.title)}</span><span class="lv">${it.page}</span></div>`).join('')}</div>`
+        : '<div class="empty">没有找到章节标题<br><span style="font-size:12px">这篇 PDF 既没有书签，也没能自动识别出标题</span></div>'}`;
+  openSheet(html, sh => {
     const center = () => { const on = sh.querySelector('.li.on'); if (on) sh.scrollTop = Math.max(0, on.offsetTop - sh.clientHeight / 2 + on.offsetHeight); };
     requestAnimationFrame(center);
     sh.onclick = e => {
       if (R !== r) return;
-      const tt = e.target.closest('[data-tt]'); if (tt) { tocTab = tt.dataset.tt; redrawSheet(draw()); sh.scrollTop = 0; if (tocTab === 'sec') requestAnimationFrame(center); return; }
       const g = e.target.closest('[data-go]');
       if (g) { closeSheet(); if (g.dataset.go === 'top') { body.scrollTop = 0; updateProgress(); } else gotoItem(refs); return; }
-      const li = e.target.closest('[data-i]'); if (li) { closeSheet(); gotoItem(items[+li.dataset.i]); return; }
-      const fi = e.target.closest('[data-f]'); if (fi) { closeSheet(); gotoItem(figs[+fi.dataset.f]); }
+      const li = e.target.closest('[data-i]'); if (li) { closeSheet(); gotoItem(items[+li.dataset.i]); }
     };
   });
 }

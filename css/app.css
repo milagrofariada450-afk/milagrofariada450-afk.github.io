@@ -76,7 +76,7 @@ html,body{overscroll-behavior:none}
 [data-theme="dark"] .hl-layer div{mix-blend-mode:normal;opacity:.55}
 .hl-layer .hl-yellow{background:#FFE066}.hl-layer .hl-green{background:#A6E3A9}.hl-layer .hl-blue{background:#A9D1F5}.hl-layer .hl-pink{background:#F7B6C6}
 .hl-layer .has-note::after{content:"";position:absolute;right:-7px;top:-7px;width:12px;height:12px;border-radius:4px;background:#2D5F7F}
-.pdf-float{position:absolute;left:50%;bottom:calc(72px + var(--safe-bottom));transform:translateX(-50%);display:flex;align-items:center;gap:2px;background:rgba(30,31,34,.86);color:#fff;border-radius:20px;padding:4px 6px;font-family:var(--sans);font-size:12.5px;backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);z-index:4;white-space:nowrap}
+.pdf-float{position:absolute;left:50%;bottom:calc(72px + var(--safe-bottom));transform:translateX(-50%);display:flex;align-items:center;gap:2px;background:#26282C;color:#fff;border-radius:20px;padding:4px 6px;font-family:var(--sans);font-size:12.5px;z-index:4;white-space:nowrap}
 .pdf-float button{width:32px;height:28px;color:#fff;font-size:17px}
 .pdf-float span{padding:0 6px;font-variant-numeric:tabular-nums}
 
@@ -138,3 +138,15 @@ html,body{overscroll-behavior:none}
 @keyframes tocfl{0%,30%{background:color-mix(in srgb,var(--accent) 16%,transparent);box-shadow:0 0 0 6px color-mix(in srgb,var(--accent) 16%,transparent)}100%{background:transparent;box-shadow:0 0 0 6px transparent}}
 .pdf-mark{position:absolute;left:0;right:0;height:3px;margin-top:-2px;background:var(--accent);z-index:3;pointer-events:none;animation:pdfmark 1.8s ease-out forwards}
 @keyframes pdfmark{0%,40%{opacity:.9}100%{opacity:0}}
+
+/* ===== 顶部 / 底部栏：不透明、无模糊 ===== */
+#statusfill{position:fixed;top:0;left:0;right:0;height:var(--safe-top);background:var(--top-bg,var(--bg));z-index:65;pointer-events:none}
+body.wide #statusfill{display:none}
+.r-head,.r-toolbar,.r-trans{background:var(--rbg);opacity:1;-webkit-backdrop-filter:none;backdrop-filter:none}
+#v-reader::before{content:"";position:absolute;left:0;right:0;top:0;height:var(--safe-top);background:var(--rbg);z-index:4}
+.r-head{z-index:5}
+.article h3.cjk{font-style:normal}
+/* 收起的弹层完全移出屏幕，阴影不再渗到底栏上（之前底部会有一层灰雾） */
+.sheet{transform:translateY(calc(100% + 60px))}
+.sheet:not(.open){box-shadow:none;visibility:hidden;transition:transform .3s cubic-bezier(.3,.7,.2,1),visibility 0s .3s}
+.sheet.open{visibility:visible}

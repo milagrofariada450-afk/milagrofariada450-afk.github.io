@@ -59,6 +59,8 @@ export function applyTheme() {
   const reading = $('#v-reader').classList.contains('open');
   const col = t === 'dark' ? (reading ? '#151618' : '#111214') : (reading ? (ST.rtheme === 'sepia' ? '#F4ECDA' : '#FBFAF7') : '#F5F4F0');
   document.querySelector('meta[name=theme-color]').content = col;
+  // 状态栏区域（iOS 取 html 背景 / 顶部固定条颜色）与当前页面顶栏同色
+  document.documentElement.style.setProperty('--top-bg', col);
 }
 
 /* 底部弹层 */
