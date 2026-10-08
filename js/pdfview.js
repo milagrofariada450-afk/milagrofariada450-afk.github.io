@@ -151,6 +151,28 @@ export class PdfView {
     }
     return { page: this.pages.length, frac: 0 };
   }
+  // 以页面坐标（scale=1 视口坐标，左上为原点）定位：offsetPx 为视口顶端向下的偏移
+  positionPt(offsetPx = 0) {
+    const st = this.scroller.scrollTop + offsetPx; const top0 = this.el.offsetTop;
+    for (let i = 0; i < this.pages.length; i++) {
+      const d = this.pages[i]; const y0 = top0 + d.offsetTop;
+      if (y0 + d.offsetHeight + 10 > st) return { page: i + 1, y: Math.max(0, Math.min(this.sizes[i][1], (st - y0) / this.scaleOf(i))) };
+    }
+    return { page: this.pages.length, y: 0 };
+  }
+  scrollToPt(page, y, marginPx = 12, x = null, mark = false) {
+    const i = Math.max(0, Math.min(this.pages.length - 1, page - 1)); const d = this.pages[i]; if (!d) return;
+    const s = this.scaleOf(i);
+    const target = Math.max(0, this.el.offsetTop + d.offsetTop + (y || 0) * s - marginPx);
+    this.scroller.scrollTop = target;
+    if (this.zoom > 1.01 && x != null) this.el.scrollLeft = Math.max(0, x * s - 16);
+    if (mark) {
+      d.querySelectorAll('.pdf-mark').forEach(m => m.remove());
+      const m = document.createElement('div'); m.className = 'pdf-mark'; m.style.top = ((y || 0) * s) + 'px'; d.appendChild(m);
+      setTimeout(() => m.remove(), 1800);
+    }
+    return target;
+  }
   scrollTo(page, frac = 0) {
     const d = this.pages[Math.max(0, Math.min(this.pages.length - 1, page - 1))]; if (!d) return;
     this.scroller.scrollTop = this.el.offsetTop + d.offsetTop + frac * (d.offsetHeight + 10) - (frac ? 0 : 6);

@@ -111,3 +111,30 @@ html,body{overscroll-behavior:none}
 .edit-tags button.on{background:var(--accent);color:var(--accent-ink)}
 .update-bar{position:absolute;left:12px;right:12px;top:calc(var(--safe-top) + 8px);z-index:120;display:flex;align-items:center;gap:10px;padding:10px 14px;border-radius:14px;background:#26282C;color:#fff;font-size:13.5px;box-shadow:0 10px 30px rgba(0,0,0,.25)}
 .update-bar button{margin-left:auto;color:#8BBBDB;font-weight:600}
+
+/* 目录 */
+.r-title{cursor:pointer;-webkit-user-select:none;user-select:none}
+.r-title .s{display:flex;align-items:center;gap:2px;min-width:0}
+.r-title .s .s-txt{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
+.r-title .s svg{flex:none;opacity:.7}
+.toc-head{position:sticky;top:-8px;z-index:2;background:var(--surface);margin:-8px -20px 0;padding:8px 20px 10px}
+.toc-head h3{margin-bottom:10px}
+.toc-tools{display:flex;align-items:center;gap:8px}
+.toc-tools .grow{flex:1}
+.toc-tools .chip{height:30px;font-size:12.5px;padding:0 11px}
+.toc .li{gap:10px;padding:12px 14px;align-items:baseline}
+.toc .li .num{flex:none;min-width:2.1em;color:var(--text3);font-variant-numeric:tabular-nums;font-size:13px}
+.toc .li .num.fig{min-width:3.4em;color:var(--accent);font-weight:600}
+.toc .li .lt{line-height:1.4}
+.toc .li.lv1{font-weight:600}
+.toc .li.lv2{padding-left:30px;font-size:14px;color:var(--text2)}
+.toc .li.lv3{padding-left:48px;font-size:13.5px;color:var(--text2)}
+.toc .li.lv2::before{left:30px}.toc .li.lv3::before{left:48px}
+.toc .li.on{color:var(--accent);background:var(--accent-soft)}
+.toc .li.on .num{color:var(--accent)}
+.toc .li.on::after{content:"";position:absolute;left:0;top:8px;bottom:8px;width:3px;border-radius:0 3px 3px 0;background:var(--accent)}
+.crop .ph{position:absolute;inset:0;height:auto}
+.blk.toc-flash{animation:tocfl 1.6s ease-out}
+@keyframes tocfl{0%,30%{background:color-mix(in srgb,var(--accent) 16%,transparent);box-shadow:0 0 0 6px color-mix(in srgb,var(--accent) 16%,transparent)}100%{background:transparent;box-shadow:0 0 0 6px transparent}}
+.pdf-mark{position:absolute;left:0;right:0;height:3px;margin-top:-2px;background:var(--accent);z-index:3;pointer-events:none;animation:pdfmark 1.8s ease-out forwards}
+@keyframes pdfmark{0%,40%{opacity:.9}100%{opacity:0}}

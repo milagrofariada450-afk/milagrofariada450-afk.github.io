@@ -1,6 +1,6 @@
 // 重排引擎：从 pdf.js 文本内容中启发式重建阅读顺序、段落、标题、图表与公式区域。
 // 纯函数模块，浏览器与 Node 均可运行（不直接依赖 pdf.js 包路径）。
-export const REFLOW_VERSION = 4;
+export const REFLOW_VERSION = 5;
 
 const mul = (m1, m2) => [
   m1[0] * m2[0] + m1[2] * m2[1], m1[1] * m2[0] + m1[3] * m2[1],
@@ -204,7 +204,7 @@ export function analyze(pages) {
         const tl = top.filter(l => l.size > maxSize - 0.6);
         const first = tl[0];
         const titleLines = tl.filter(l => Math.abs(l.y - first.y) < maxSize * 4.5);
-        push({ type: 'title', text: titleLines.map(l => l.text).join(' ').replace(/\s+/g, ' '), page: pi + 1 });
+        push({ type: 'title', text: titleLines.map(l => l.text).join(' ').replace(/\s+/g, ' '), page: pi + 1, top: Math.min(...titleLines.map(l => l.minTop)) });
         titleLines.forEach(l => (l.used = true));
         titleDone = true;
       }
@@ -361,7 +361,7 @@ export function analyze(pages) {
       if (b.text.length < 25 && !/[.:?!]$/.test(b.text) && letters(b.text) < 15) return false;
     }
     return true;
-  }).map(b => { const o = { id: b.id, type: b.type, page: b.page }; if (b.text) o.text = b.text; if (b.bbox) { const [PW, PH] = [pages[b.page - 1].W, pages[b.page - 1].H]; o.bbox = [Math.max(0, b.bbox[0]), Math.max(0, b.bbox[1]), Math.min(PW, b.bbox[2]), Math.min(PH, b.bbox[3])].map(v => Math.round(v * 10) / 10); } if (b.table) o.table = true; return o; });
+  }).map(b => { const o = { id: b.id, type: b.type, page: b.page }; if (b.text) o.text = b.text; if (b.bbox) { const [PW, PH] = [pages[b.page - 1].W, pages[b.page - 1].H]; o.bbox = [Math.max(0, b.bbox[0]), Math.max(0, b.bbox[1]), Math.min(PW, b.bbox[2]), Math.min(PH, b.bbox[3])].map(v => Math.round(v * 10) / 10); } if (b.table) o.table = true; const top = b.bbox ? b.bbox[1] : b.top; if (top != null && isFinite(top)) o.y = Math.max(0, Math.round(top * 10) / 10); return o; });
   return { version: REFLOW_VERSION, body, blocks: cleaned, pages: pages.map(p => [Math.round(p.W), Math.round(p.H)]) };
 }
 

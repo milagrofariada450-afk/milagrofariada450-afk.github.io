@@ -43,6 +43,7 @@ export async function openReader(id, opts = {}) {
     if (!p.numPages) p.numPages = R.pdf.numPages;
     p.openedAt = Date.now(); savePaper(p);
     await renderMode(true);
+    loadOutline().catch(() => {});
     if (opts.jump) setTimeout(() => jumpTo(opts.jump), 120);
   } catch (e) {
     console.error(e);
@@ -123,10 +124,26 @@ $('#r-mode').onclick = e => { const b = e.target.closest('[data-m]'); if (b && R
 $('#trans-seg').onclick = e => { const b = e.target.closest('[data-t]'); if (b && R) setTrans(b.dataset.t); };
 
 /* ---------- 模式切换与位置 ---------- */
+// 当前阅读位置对应的重排块（视口顶部向下 offset 像素处）
+function blockAtView(offset = 60) {
+  if (!R) return null;
+  if (R.mode === 'pdf' && R.pv) {
+    const loc = R.pv.positionPt(offset);
+    const onPage = R.blocks.filter(b => b.page === loc.page && b.y != null && b.type !== 'title');
+    return onPage.find(b => b.y >= loc.y - 4) || R.blocks.find(b => b.page > loc.page) || onPage[onPage.length - 1] || null;
+  }
+  const els = R.els && R.els.length && R.els[0].isConnected ? R.els : (R.els = [...body.querySelectorAll('.blk[data-bid]')]);
+  const st = body.scrollTop + offset;
+  let lo = 0, hi = els.length - 1, ans = 0;
+  while (lo <= hi) { const mid = (lo + hi) >> 1; if (els[mid].offsetTop + els[mid].offsetHeight > st) { ans = mid; hi = mid - 1; } else lo = mid + 1; }
+  const el = els[ans]; return el ? R.bmap[el.dataset.bid] || null : null;
+}
 async function setMode(m, target) {
-  const cur = currentPos();
-  if (R.mode === 'reflow' && m === 'pdf' && !target) { const b = R.bmap[cur.bid]; if (b) target = { page: b.page, frac: 0 }; }
-  if (R.mode === 'pdf' && m === 'reflow' && !target) { const b = R.blocks.find(x => x.page >= cur.page && x.type !== 'figure'); if (b) target = { bid: b.id }; }
+  if (!target) {
+    const b = blockAtView(16);
+    if (R.mode === 'reflow' && m === 'pdf' && b) target = b.y != null ? { page: b.page, y: b.y } : { page: b.page, frac: 0 };
+    if (R.mode === 'pdf' && m === 'reflow' && b) target = { bid: b.id };
+  }
   savePos(true);
   R.mode = m; R.p.lastMode = m; hideSel();
   await renderMode(false, target);
@@ -137,27 +154,26 @@ async function renderMode(restore, target) {
   syncHeader(); renderToolbar();
   const pos = target || (restore ? (R.p.pos || {})[R.mode] : null);
   if (R.mode === 'reflow') {
-    body.innerHTML = reflowHTML();
+    body.innerHTML = reflowHTML(); R.els = null;
     setupReflowObservers();
-    if (pos && pos.bid) { const el = body.querySelector(`.blk[data-bid="${pos.bid}"]`); if (el) body.scrollTop = el.offsetTop - 8 + (pos.off || 0); else body.scrollTop = 0; }
+    if (pos && pos.bid) { const el = body.querySelector(`.blk[data-bid="${pos.bid}"]`); if (el) body.scrollTop = el.offsetTop - 12 + (pos.off || 0); else body.scrollTop = 0; }
     else body.scrollTop = 0;
   } else {
     const pv = new PdfView(body, R.pdf, { getHighlights: () => R.hls, onZoom: () => updateProgress() });
     R.pv = pv;
     await pv.mount(R.rf && R.rf.pages);
     if (R.pv !== pv) return;
-    if (pos && pos.page) pv.scrollTo(pos.page, pos.frac || 0); else body.scrollTop = 0;
+    if (pos && pos.page && pos.y != null) pv.scrollToPt(pos.page, pos.y, 12, pos.x ?? null, !!pos.mark);
+    else if (pos && pos.page) pv.scrollTo(pos.page, pos.frac || 0); else body.scrollTop = 0;
   }
   updateProgress();
 }
 function currentPos() {
   if (!R) return {};
   if (R.mode === 'pdf' && R.pv) return R.pv.position();
-  const st = body.scrollTop; const els = body.querySelectorAll('.blk[data-bid]');
-  let lo = 0, hi = els.length - 1, ans = 0;
-  while (lo <= hi) { const mid = (lo + hi) >> 1; if (els[mid].offsetTop + els[mid].offsetHeight > st + 4) { ans = mid; hi = mid - 1; } else lo = mid + 1; }
-  const el = els[ans]; if (!el) return {};
-  return { bid: el.dataset.bid, off: Math.max(0, st - el.offsetTop + 8) };
+  const b = blockAtView(4); if (!b) return {};
+  const el = body.querySelector(`.blk[data-bid="${b.id}"]`);
+  return { bid: b.id, off: el ? Math.max(0, body.scrollTop - el.offsetTop + 12) : 0 };
 }
 function pct() {
   if (R.mode === 'pdf' && R.pv) { const p = R.pv.position(); return Math.min(100, ((p.page - 1 + p.frac) / R.pdf.numPages) * 100); }
@@ -166,14 +182,19 @@ function pct() {
 function updateProgress() {
   if (!R || !R.ready) return;
   const v = pct(); $('#r-bar').style.width = v + '%';
+  const sec = currentTocItem(tocItems(R.mode));
+  const secTxt = sec ? `${sec.num ? sec.num + ' ' : ''}${sec.title}` : '';
+  let txt;
   if (R.mode === 'pdf' && R.pv) {
     const pg = R.pv.position().page;
-    $('#r-s').textContent = `原版 PDF · 第 ${pg} / ${R.pdf.numPages} 页`;
+    txt = `原版 · 第 ${pg}/${R.pdf.numPages} 页${secTxt ? ' · ' + secTxt : ''}`;
     const pn = $('#pgno'); if (pn) pn.textContent = `第 ${pg} / ${R.pdf.numPages} 页 · ${Math.round(R.pv.zoom * 100)}%`;
   } else {
     const left = Math.max(1, Math.round(R.words / 200 * (1 - v / 100)));
-    $('#r-s').textContent = `已读 ${Math.round(v)}% · 剩约 ${left} 分钟`;
+    txt = `已读 ${Math.round(v)}% · ${secTxt || '剩约 ' + left + ' 分钟'}`;
   }
+  const s = $('#r-s');
+  if (s._t !== txt) { s._t = txt; s.innerHTML = `<span class="s-txt">${esc(txt)}</span>${ic('down', 'xs')}`; }
 }
 function savePos(now) {
   if (!R || !R.ready) return;
@@ -228,7 +249,10 @@ function headHTML(b) {
 }
 function cropHTML(b) {
   const isEq = b.type === 'eq';
-  return `<div class="crop ${isEq ? 'eq' : 'fig'} blk" data-bid="${b.id}" data-crop="${b.id}"><div class="cbox"><div class="ph">${isEq ? '' : `${b.table ? '表格' : '图'} · 第 ${b.page} 页`}</div></div>${isEq ? '' : `<span class="pg" data-page="${b.page}">查看原页 ›</span>`}</div>`;
+  const bw = Math.max(1, b.bbox[2] - b.bbox[0]), bh = Math.max(1, b.bbox[3] - b.bbox[1]);
+  // 预先按裁剪区域比例占位，懒加载图片时版面不跳动，目录跳转才准确
+  const sz = isEq ? `width:min(100%,${Math.round(bw * ST.fs * 0.95 / (R.rf.body || 10))}px);aspect-ratio:${bw}/${bh};min-height:0` : `aspect-ratio:${bw}/${bh};min-height:0`;
+  return `<div class="crop ${isEq ? 'eq' : 'fig'} blk" data-bid="${b.id}" data-crop="${b.id}"><div class="cbox" style="${sz}"><div class="ph">${isEq ? '' : `${b.table ? '表格' : '图'} · 第 ${b.page} 页`}</div></div>${isEq ? '' : `<span class="pg" data-page="${b.page}" data-y="${b.bbox[1]}">查看原页 ›</span>`}</div>`;
 }
 function blockHTML(b) {
   switch (b.type) {
@@ -272,7 +296,6 @@ async function drawCrop(el) {
   const c = document.createElement('canvas');
   const bw = b.bbox[2] - b.bbox[0];
   let cssW = box.clientWidth || body.clientWidth - 30;
-  if (b.type === 'eq') { const k = ST.fs * 0.95 / (R.rf.body || 10); cssW = Math.min(cssW, bw * k); c.style.width = cssW + 'px'; }
   try {
     await renderCrop(R.pdf, b.page, b.bbox, cssW, c);
     if (!R || R.token !== tok) return;
@@ -358,7 +381,7 @@ body.addEventListener('click', e => {
     else { R.aiTab = k; redrawAI(); }
     return; }
   if (e.target.closest('[data-hidenote]')) { ST.hideReflowNote = true; saveST(); e.target.closest('.reflow-note').remove(); return; }
-  const pg = e.target.closest('.pg[data-page]'); if (pg) { setMode('pdf', { page: +pg.dataset.page, frac: 0 }); return; }
+  const pg = e.target.closest('.pg[data-page]'); if (pg) { setMode('pdf', { page: +pg.dataset.page, y: +pg.dataset.y || 0, mark: true }); return; }
   const rt = e.target.closest('[data-retry]'); if (rt) { requestTrans(rt.dataset.retry); updateZh(rt.dataset.retry); return; }
   const fr = e.target.closest('[data-front]'); if (fr) { fr.classList.toggle('open'); return; }
   const m = e.target.closest('mark.hl'); if (m && getSelection().isCollapsed) { openHlSheet(m.dataset.hid); return; }
@@ -371,26 +394,170 @@ body.addEventListener('click', e => {
 });
 
 /* ---------- 目录 / 显示 / 更多 ---------- */
-async function openToc() {
-  let items = R.blocks.filter(b => (b.type === 'h2' || b.type === 'h3') && b.text.length < 140).map(b => ({ t: b.text, sub: b.type === 'h3', bid: b.id, page: b.page }));
-  if (!items.length) {
-    try { const ol = await R.pdf.getOutline(); if (ol) for (const o of ol.slice(0, 80)) { let page = 1; try { const d = typeof o.dest === 'string' ? await R.pdf.getDestination(o.dest) : o.dest; if (d) page = (await R.pdf.getPageIndex(d[0])) + 1; } catch (e) {} items.push({ t: o.title, sub: false, page }); } } catch (e) {}
+/* ---------- 目录 ---------- */
+const NUM_RE = /^((?:\d{1,2}(?:\.\d{1,2}){0,3})\.?|[IVX]{1,6}\.|[A-H]\.|[一二三四五六七八九十]{1,3}[、.．]|(?:Appendix|附录)\s+[A-Z0-9]+[.:]?)\s+(\S.*)$/;
+function splitNum(t) { t = t.replace(/\s+/g, ' ').trim(); const m = t.match(NUM_RE); return m ? [m[1].replace(/[.、．:]$/, ''), m[2]] : ['', t]; }
+function levelOf(num, type) {
+  if (/^\d/.test(num)) return Math.min(3, num.split('.').length);
+  if (/^[IVX]+$/.test(num) || /^[一二三四五六七八九十]+$/.test(num) || /^(Appendix|附录)/.test(num)) return 1;
+  if (/^[A-H]$/.test(num)) return 2;
+  return type === 'h3' ? 2 : 1;
+}
+// 重排识别的章节标题（带页码与页内 y 坐标）
+function headingItems() {
+  if (R._heads) return R._heads;
+  const out = [];
+  for (const b of R.blocks) {
+    if ((b.type !== 'h2' && b.type !== 'h3') || !b.text || b.text.length > 140) continue;
+    const [num, title] = splitNum(b.text);
+    out.push({ num, title, level: levelOf(num, b.type), page: b.page, y: b.y, bid: b.id, src: 'auto' });
   }
-  const cur = currentPos(); const curBlk = R.mode === 'reflow' ? R.bmap[cur.bid] : R.blocks.find(b => b.page >= cur.page);
-  let on = null; if (curBlk) for (const it of items) { const b = it.bid && R.bmap[it.bid]; if (b ? b.idx <= curBlk.idx : it.page <= curBlk.page) on = it; }
-  const figs = R.blocks.filter(b => b.type === 'caption').map(b => ({ t: b.text.slice(0, 60), bid: b.id, page: b.page }));
-  openSheet(`<h3>目录 <small>${R.pdf.numPages} 页 · ${items.length} 节</small></h3>
-    ${items.length ? `<div class="list toc">${items.map((it, i) => `<div class="li ${it.sub ? 'sub' : ''} ${it === on ? 'on' : ''}" data-to="${i}"><span class="lt">${esc(it.t)}</span><span class="lv">${it.page}</span></div>`).join('')}</div>` : '<div class="empty">未识别到章节标题</div>'}
-    ${figs.length ? `<div class="group-t" style="padding:16px 4px 6px">图表</div><div class="list toc">${figs.map((f, i) => `<div class="li sub" data-fig="${i}" style="padding-left:14px"><span class="lt">${esc(f.t)}</span><span class="lv">${f.page}</span></div>`).join('')}</div>` : ''}`, sh => {
+  return (R._heads = out);
+}
+// PDF 自带书签（outline）
+async function loadOutline() {
+  if (R.outline !== undefined) return R.outline;
+  const r = R; let ol = null;
+  try { ol = await r.pdf.getOutline(); } catch (e) {}
+  if (ol && ol.length === 1 && ol[0].items && ol[0].items.length >= 2) ol = ol[0].items; // 去掉以论文标题为根的一层
+  const out = [];
+  const walk = async (items, lvl) => {
+    for (const o of items) {
+      if (out.length > 400) return;
+      const d = await resolveDest(r.pdf, o.dest);
+      let [num, title] = splitNum(o.title || '');
+      if (!num) { const m = (o.title || '').trim().match(/^([IVX]{1,6}|[A-H])\s+([A-Z\u4e00-\u9fff].*)$/); if (m) { num = m[1]; title = m[2]; } }
+      if (d && title) out.push({ num, title, level: lvl, page: d.page, y: d.y, x: d.x, src: 'outline' });
+      if (o.items && o.items.length) await walk(o.items, Math.min(3, lvl + 1));
+    }
+  };
+  if (ol && ol.length) await walk(ol, 1);
+  r.outline = out.length >= 2 ? out : null;
+  if (R === r) { R._toc = null; updateProgress(); }
+  return r.outline;
+}
+async function resolveDest(pdf, dest) {
+  try {
+    const d = typeof dest === 'string' ? await pdf.getDestination(dest) : dest;
+    if (!Array.isArray(d) || !d.length) return null;
+    const ref = d[0];
+    const idx = ref && typeof ref === 'object' ? await pdf.getPageIndex(ref) : Number.isInteger(ref) ? ref : null;
+    if (idx == null) return null;
+    const page = await pdf.getPage(idx + 1); const vp = page.getViewport({ scale: 1 });
+    const kind = d[1] && d[1].name; let left = null, top = null;
+    if (kind === 'XYZ') { left = d[2]; top = d[3]; } else if (kind === 'FitH' || kind === 'FitBH') top = d[2]; else if (kind === 'FitR') { left = d[2]; top = d[5]; }
+    let x = null, y = null;
+    if (top != null) { const pt = vp.convertToViewportPoint(left || 0, top); y = Math.max(0, Math.min(vp.height, pt[1])); if (left != null) x = Math.max(0, pt[0]); }
+    return { page: idx + 1, y, x };
+  } catch (e) { return null; }
+}
+// 把（页, y）映射到重排块
+function blockAt(page, y) {
+  const onPage = R.blocks.filter(b => b.page === page && b.y != null && b.type !== 'title');
+  if (y != null) { const b = onPage.find(b => b.y >= y - 6 && /^(h2|h3|p|caption|figure|eq|ref|small)$/.test(b.type)); if (b) return b; }
+  return onPage[0] || R.blocks.find(b => b.page >= page) || null;
+}
+// 每种模式使用的目录项
+function tocItems(mode) {
+  R._toc = R._toc || {};
+  if (R._toc[mode]) return R._toc[mode];
+  const heads = headingItems(); const ol = R.outline;
+  let items;
+  if (mode === 'pdf') items = ol || heads;
+  else if (heads.length >= 2 || !ol) items = heads;
+  else items = ol.map(o => ({ ...o, bid: (blockAt(o.page, o.y) || {}).id }));
+  return (R._toc[mode] = items);
+}
+function currentTocItem(items) {
+  if (!items || !items.length) return null;
+  // 刚从目录跳转过来、尚未滚动时，以所选条目为当前章节（避免紧随其后的小节抢占）
+  const pin = R.pin; if (pin && pin.mode === R.mode && Math.abs(body.scrollTop - pin.st) < 8 && items.includes(pin.it)) return pin.it;
+  let cur = null;
+  if (R.mode === 'reflow') {
+    const b = blockAtView(24); if (!b) return null;
+    for (const it of items) { const hb = it.bid && R.bmap[it.bid]; if (hb && hb.idx <= b.idx) cur = it; }
+  } else if (R.pv) {
+    const p = R.pv.positionPt(24);
+    for (const it of items) { if (it.page < p.page || (it.page === p.page && (it.y == null ? 0 : it.y) <= p.y + 2)) cur = it; }
+  }
+  return cur;
+}
+function figureItems() {
+  const out = [];
+  R.blocks.forEach((b, i) => {
+    if (b.type !== 'caption') return;
+    const m = b.text.match(/^(fig\.?|figure|table|tab\.|图|表)\s*([0-9IVX]+[a-z]?)[.:|：]?\s*(.*)$/i);
+    const isTab = m && /^(table|tab|表)/i.test(m[1]);
+    const prev = R.blocks[i - 1], next = R.blocks[i + 1];
+    const fig = (prev && prev.type === 'figure' && prev.page === b.page) ? prev : (next && next.type === 'figure' && next.page === b.page) ? next : null;
+    const tgt = fig || b;
+    out.push({ label: m ? `${isTab ? '表' : '图'} ${m[2]}` : '图表', title: ((t => t.length > 90 ? t.slice(0, 88) + '…' : t)(m ? m[3] : b.text)), page: b.page, y: tgt.y, bid: tgt.id, isTab });
+  });
+  return out;
+}
+function refsItem(items) {
+  const h = headingItems().find(x => /^(references|bibliography|参考文献|literature cited)/i.test(x.title));
+  if (h) return h;
+  const o = (R.outline || []).find(x => /^(references|bibliography|参考文献)/i.test(x.title));
+  if (o) return { ...o, bid: (blockAt(o.page, o.y) || {}).id };
+  const rb = R.blocks.find(b => b.type === 'ref');
+  return rb ? { title: '参考文献', page: rb.page, y: rb.y, bid: rb.id } : null;
+}
+let tocTab = 'sec';
+async function openToc() {
+  if (!R || !R.ready) return;
+  if (R.outline === undefined) await loadOutline();
+  const r = R;
+  const items = tocItems(R.mode); const cur = currentTocItem(items);
+  const figs = figureItems(); const refs = refsItem();
+  const src = items.length && items[0].src === 'outline' ? 'PDF 书签' : '自动识别';
+  if (tocTab === 'fig' && !figs.length) tocTab = 'sec';
+  const draw = () => `<div class="toc-head"><h3>目录 <small>${items.length ? `${src} · ${items.length} 项` : ''}${R.mode === 'pdf' ? ' · 原版' : ' · 重排'}</small></h3>
+     <div class="toc-tools">${figs.length ? `<div class="mini-seg"><button data-tt="sec" class="${tocTab === 'sec' ? 'on' : ''}">章节</button><button data-tt="fig" class="${tocTab === 'fig' ? 'on' : ''}">图表 ${figs.length}</button></div>` : ''}
+       <span class="grow"></span><button class="chip" data-go="top">↑ 开头</button>${refs ? '<button class="chip" data-go="refs">参考文献</button>' : ''}</div></div>
+     ${tocTab === 'sec'
+      ? (items.length ? `<div class="list toc">${items.map((it, i) => `<div class="li lv${it.level} ${it === cur ? 'on' : ''}" data-i="${i}">${it.num ? `<span class="num">${esc(it.num)}</span>` : ''}<span class="lt">${esc(it.title)}</span><span class="lv">${it.page}</span></div>`).join('')}</div>`
+        : '<div class="empty">没有找到章节标题<br><span style="font-size:12px">这篇 PDF 既没有书签，也没能自动识别出标题</span></div>')
+      : `<div class="list toc">${figs.map((f, i) => `<div class="li" data-f="${i}"><span class="num fig">${esc(f.label)}</span><span class="lt">${esc(f.title)}</span><span class="lv">${f.page}</span></div>`).join('')}</div>`}`;
+  openSheet(draw(), sh => {
+    const center = () => { const on = sh.querySelector('.li.on'); if (on) sh.scrollTop = Math.max(0, on.offsetTop - sh.clientHeight / 2 + on.offsetHeight); };
+    requestAnimationFrame(center);
     sh.onclick = e => {
-      const li = e.target.closest('[data-to],[data-fig]'); if (!li) return;
-      const it = li.dataset.to != null ? items[+li.dataset.to] : figs[+li.dataset.fig]; closeSheet();
-      if (R.mode === 'reflow' && it.bid) { const el = body.querySelector(`.blk[data-bid="${it.bid}"]`); if (el) body.scrollTo({ top: el.offsetTop - 10, behavior: 'smooth' }); }
-      else if (R.mode === 'pdf') R.pv.scrollTo(it.page, 0);
-      else setMode('pdf', { page: it.page, frac: 0 });
+      if (R !== r) return;
+      const tt = e.target.closest('[data-tt]'); if (tt) { tocTab = tt.dataset.tt; redrawSheet(draw()); sh.scrollTop = 0; if (tocTab === 'sec') requestAnimationFrame(center); return; }
+      const g = e.target.closest('[data-go]');
+      if (g) { closeSheet(); if (g.dataset.go === 'top') { body.scrollTop = 0; updateProgress(); } else gotoItem(refs); return; }
+      const li = e.target.closest('[data-i]'); if (li) { closeSheet(); gotoItem(items[+li.dataset.i]); return; }
+      const fi = e.target.closest('[data-f]'); if (fi) { closeSheet(); gotoItem(figs[+fi.dataset.f]); }
     };
   });
 }
+function gotoItem(it) {
+  if (!it || !R) return;
+  R.pin = null;
+  if (R.mode === 'reflow') {
+    const bid = it.bid || (blockAt(it.page, it.y) || {}).id;
+    R.pin = { it, mode: 'reflow', st: -99 };
+    scrollToBid(bid);
+  } else if (R.pv) {
+    if (it.y != null) R.pv.scrollToPt(it.page, it.y, 12, it.x ?? null, true);
+    else R.pv.scrollTo(it.page, 0);
+    R.pin = { it, mode: 'pdf', st: body.scrollTop };
+    updateProgress(); savePos();
+  }
+}
+function scrollToBid(bid) {
+  const el = bid && body.querySelector(`.blk[data-bid="${bid}"]`); if (!el) return;
+  let target = el.offsetTop - 12;
+  body.scrollTop = target; if (R.pin) R.pin.st = body.scrollTop;
+  // 版面若因图片加载稍有变化，再对齐一次（用户已手动滚动则不干预）
+  const realign = () => { if (Math.abs(body.scrollTop - target) < 3) { target = el.offsetTop - 12; body.scrollTop = target; if (R && R.pin) R.pin.st = body.scrollTop; } };
+  requestAnimationFrame(realign); setTimeout(realign, 300);
+  el.classList.remove('toc-flash'); void el.offsetWidth; el.classList.add('toc-flash');
+  updateProgress(); savePos();
+}
+$('#r-t').parentElement.addEventListener('click', () => { if (R && R.ready) openToc(); });
+
 function openAa() {
   const th = effTheme();
   const draw = () => `<h3>显示设置</h3>
@@ -584,8 +751,9 @@ async function jumpTo(hid) {
     const top = m.getBoundingClientRect().top - body.getBoundingClientRect().top + body.scrollTop - 140;
     body.scrollTo({ top, behavior: 'smooth' }); m.classList.remove('flash'); void m.offsetWidth; m.classList.add('flash');
   } else {
-    const target = { page: h.page, frac: h.rects ? Math.max(0, h.rects[0][1] - 0.12) : 0 };
-    if (R.mode !== 'pdf') await setMode('pdf', target); else R.pv.scrollTo(target.page, target.frac);
+    const H = (R.rf.pages && R.rf.pages[h.page - 1]) ? R.rf.pages[h.page - 1][1] : 792;
+    const target = h.rects ? { page: h.page, y: Math.max(0, h.rects[0][1] * H - 80) } : { page: h.page, frac: 0 };
+    if (R.mode !== 'pdf') await setMode('pdf', target); else if (target.y != null) R.pv.scrollToPt(target.page, target.y); else R.pv.scrollTo(target.page, 0);
   }
 }
 export async function paperMarkdown(p) {
