@@ -33,7 +33,13 @@ export const P = {
   phone:'<rect x="7" y="2.5" width="10" height="19" rx="2.5"/><path d="M11 18.5h2"/>',
   wifi:'<path d="M2 8.5a15 15 0 0 1 20 0M5 12a10 10 0 0 1 14 0M8.5 15.5a5 5 0 0 1 7 0"/><path d="M12 19h.01" stroke-width="2.6"/>',
   tag:'<path d="M3 12V4h8l10 10-8 8z"/><circle cx="7.5" cy="8.5" r="1.3"/>',
-  refresh:'<path d="M20 11a8 8 0 0 0-14.7-3.5M4 4v4h4M4 13a8 8 0 0 0 14.7 3.5M20 20v-4h-4"/>'
+  refresh:'<path d="M20 11a8 8 0 0 0-14.7-3.5M4 4v4h4M4 13a8 8 0 0 0 14.7 3.5M20 20v-4h-4"/>',
+  speak:'<path d="M4 9.5v5h3.2L12 19V5L7.2 9.5z"/><path d="M16 9a4 4 0 0 1 0 6M18.2 6.8a7.5 7.5 0 0 1 0 10.4"/>',
+  play:'<path d="M8 5.5v13l11-6.5z"/>',
+  pause:'<path d="M7 5h3.2v14H7zM13.8 5H17v14h-3.2z"/>',
+  stop:'<rect x="6.5" y="6.5" width="11" height="11" rx="1.5"/>',
+  prev:'<path d="M18 6v12L9 12z"/><path d="M6 6v12"/>',
+  next:'<path d="M6 6v12l9-6z"/><path d="M18 6v12"/>',
 };
 export const ic = (n, c = '') => `<svg class="i ${c}" viewBox="0 0 24 24">${P[n] || ''}</svg>`;
 export const $ = s => document.querySelector(s);
@@ -48,7 +54,7 @@ export const uid = p => p + Date.now().toString(36) + Math.random().toString(36)
 
 /* 设置（只存本机） */
 const SKEY = 'yandu.settings';
-const DEF = { theme: 'auto', rtheme: 'paper', fs: 17, lh: 1.75, font: 'serif', defMode: 'reflow', color: 'yellow', trans: 'off', sort: 'recent', hideReflowNote: false };
+const DEF = { theme: 'auto', rtheme: 'paper', fs: 17, lh: 1.75, font: 'serif', defMode: 'reflow', color: 'yellow', trans: 'off', sort: 'recent', hideReflowNote: false, ttsRate: 1 };
 export const ST = Object.assign({}, DEF, (() => { try { return JSON.parse(localStorage.getItem(SKEY) || '{}'); } catch (e) { return {}; } })());
 export function saveST() { try { localStorage.setItem(SKEY, JSON.stringify(ST)); } catch (e) {} }
 export const effTheme = () => ST.theme === 'auto' ? (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light') : ST.theme;

@@ -2,6 +2,7 @@
 import * as db from './db.js';
 import * as ai from './ai.js';
 import { extractReflow, REFLOW_VERSION } from './reflow.js';
+import { Speaker, RATES, speakableBlocks } from './tts.js';
 import { loadPdf, renderCrop, PdfView, selectionToPdf, closePdf } from './pdfview.js';
 import { ic, $, esc, phone, CN, COLORS, toast, ago, uid, ST, saveST, applyTheme, effTheme, openSheet, redrawSheet, closeSheet, sheetOpen, download, copyText, safeName } from './util.js';
 import { LIB, savePaper, renderTab, switchTab, openPaperSheet } from './app.js';
@@ -57,6 +58,7 @@ export async function closeReader(silent) {
   r.abort.abort(); r.tq = [];
   r.ios.forEach(o => o.disconnect());
   r.pv && r.pv.destroy();
+  stopTts();
   R = null;
   hideSel();
   if (!silent) { closeSheet(); $('#v-reader').classList.remove('open'); applyTheme(); $('#pdf-float') && ($('#pdf-float').style.display = 'none'); }
@@ -109,6 +111,7 @@ function renderToolbar() {
    <button data-tb="trans" class="${R && (R.transOpen || ST.trans !== 'off') ? 'on' : ''}">${ic('trans')}<span>翻译</span></button>
    <button data-tb="notes">${ic('note')}<span>笔记${n ? ' ' + n : ''}</span></button>
    <button data-tb="aa"><span class="aa">Aa</span><span>显示</span></button>
+   <button data-tb="tts" class="${ttsOn() ? 'on' : ''}">${ic('speak')}<span>朗读</span></button>
    <button data-tb="night">${ic(dark ? 'sun' : 'moon')}<span>${dark ? '日间' : '夜间'}</span></button>`;
 }
 export function onReaderThemeChange() { if (R) renderToolbar(); }
@@ -119,6 +122,7 @@ $('#r-toolbar').onclick = e => {
   if (k === 'notes') openNotesPanel();
   if (k === 'aa') openAa();
   if (k === 'night') { ST.theme = effTheme() === 'dark' ? 'light' : 'dark'; saveST(); applyTheme(); renderToolbar(); }
+  if (k === 'tts') toggleTts();
 };
 $('#r-mode').onclick = e => { const b = e.target.closest('[data-m]'); if (b && R && R.ready && b.dataset.m !== R.mode) setMode(b.dataset.m); };
 $('#trans-seg').onclick = e => { const b = e.target.closest('[data-t]'); if (b && R) setTrans(b.dataset.t); };
@@ -176,6 +180,7 @@ async function renderMode(restore, target) {
     else if (pos && pos.page) pv.scrollTo(pos.page, pos.frac || 0); else body.scrollTop = 0;
   }
   updateProgress();
+  if (ttsOn()) paintTts();
 }
 function currentPos() {
   if (!R) return {};
@@ -324,6 +329,7 @@ function setTrans(t) {
   body.innerHTML = reflowHTML(); setupReflowObservers();
   const el = pos.bid && body.querySelector(`.blk[data-bid="${pos.bid}"]`); if (el) body.scrollTop = el.offsetTop - 8;
   updateProgress();
+  if (ttsOn()) paintTts();
 }
 function needAI(what) {
   openSheet(`<h3>需要先配置 AI 接口</h3><div class="help" style="font-size:14px;color:var(--text2);line-height:1.8;margin-top:0">${esc(what)}使用你自己的 OpenAI 兼容接口（如 DeepSeek、OpenAI、硅基流动、本地 Ollama 等）。<br>在「我的 → AI 翻译与速读」中填写接口地址、API Key 和模型名即可，密钥只保存在本机。</div>
@@ -721,6 +727,7 @@ function refreshHL(h) {
   if (!R) return;
   if (h.mode === 'reflow') { const en = body.querySelector(`p.en[data-bid="${h.bid}"]`); if (en) en.innerHTML = hlHTML(R.bmap[h.bid]); }
   else if (R.pv) R.pv.drawHighlights(h.page);
+  if (ttsOn()) paintTts();
   renderToolbar();
 }
 function openHlSheet(hid, isNew) {
@@ -803,3 +810,106 @@ async function exportPaper() {
   download(`笔记-${safeName(R.p.title)}.md`, md);
   toast('已导出 Markdown 文件');
 }
+
+/* ---------- 朗读 ---------- */
+let speaker = null;
+let ttsMark = { id: null, sent: '' };
+function ttsOn() { return !!(speaker && speaker.state !== 'idle'); }
+function ensureSpeaker() {
+  if (speaker) return speaker;
+  if (typeof speechSynthesis === 'undefined' || typeof SpeechSynthesisUtterance === 'undefined') return null;
+  try { speechSynthesis.getVoices(); } catch (e) {}
+  speaker = new Speaker(speechSynthesis, SpeechSynthesisUtterance);
+  speaker.rate = RATES.includes(+ST.ttsRate) ? +ST.ttsRate : 1;
+  speaker.onchange = () => { paintTts(); if (R) renderToolbar(); };
+  return speaker;
+}
+function ttsStartId() {
+  const list = speakableBlocks(R.blocks);
+  if (!list.length) return null;
+  const b = blockAtView(24);
+  if (!b) return list[0].id;
+  return (list.find(x => x.idx >= b.idx) || list[list.length - 1]).id;
+}
+function toggleTts() {
+  const sp = ensureSpeaker();
+  if (!sp) { toast('这台设备不支持朗读'); return; }
+  if (sp.state === 'playing' || sp.state === 'paused') { sp.toggle(); return; }
+  const id = ttsStartId();
+  if (!id) { toast('从这里没有可以朗读的文字'); return; }
+  sp.rate = RATES.includes(+ST.ttsRate) ? +ST.ttsRate : 1;
+  sp.setBlocks(R.blocks, id);
+  if (!sp.start()) toast('从这里没有可以朗读的文字');
+}
+function stopTts() { if (speaker && speaker.state !== 'idle') speaker.stop(); else paintTts(); }
+function openRate() {
+  if (!speaker) return;
+  const cur = speaker.rate;
+  const labels = { 0.75: '稍慢', 1: '正常', 1.25: '稍快', 1.5: '较快' };
+  openSheet(`<h3>朗读速度</h3><div class="list">${RATES.map(r => `<div class="li" data-rate="${r}"><span class="lt">${r}× · ${labels[r]}</span>${r === cur ? '<span class="lv">当前</span>' : ''}</div>`).join('')}</div>`, sh => {
+    sh.onclick = e => {
+      const li = e.target.closest('[data-rate]'); if (!li || !speaker) return;
+      const r = +li.dataset.rate;
+      ST.ttsRate = r; saveST();
+      speaker.setRate(r);
+      closeSheet();
+    };
+  });
+}
+function clearTtsMark() {
+  body.querySelectorAll('.tts-on').forEach(n => n.classList.remove('tts-on'));
+  body.querySelectorAll('.tts-sent').forEach(s => { s.replaceWith(document.createTextNode(s.textContent)); });
+  if (body.querySelector('#article')) body.querySelector('#article').normalize();
+}
+function markSentence(root, sent) {
+  root.querySelectorAll('.tts-sent').forEach(s => s.replaceWith(document.createTextNode(s.textContent)));
+  root.normalize();
+  if (!sent) return;
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, { acceptNode: n => (n.parentElement && n.parentElement.closest('.zh, .hzh, .pg, .a-title-zh')) ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_ACCEPT });
+  const nodes = []; let full = '', n;
+  while ((n = walker.nextNode())) { nodes.push({ n, start: full.length }); full += n.nodeValue; }
+  const i = full.indexOf(sent);
+  if (i < 0) return;
+  const end = i + sent.length;
+  nodes.filter(x => x.start < end && x.start + x.n.nodeValue.length > i).reverse().forEach(({ n, start }) => {
+    const a = Math.max(0, i - start), b = Math.min(n.nodeValue.length, end - start);
+    const mid = n.splitText(a); mid.splitText(b - a);
+    const span = document.createElement('span'); span.className = 'tts-sent';
+    mid.parentNode.insertBefore(span, mid); span.appendChild(mid);
+  });
+}
+function paintTts() {
+  const bar = $('#tts-bar'); if (!bar) return;
+  const on = ttsOn();
+  bar.hidden = !on;
+  $('#v-reader').classList.toggle('reading-aloud', on);
+  if (!on || !R) { clearTtsMark(); ttsMark = { id: null, sent: '' }; return; }
+  const b = speaker.current(), sent = speaker.sentence();
+  $('#tts-line').textContent = sent || (b && b.text) || '';
+  const pause = $('#tts-pause');
+  pause.innerHTML = speaker.state === 'paused' ? `${ic('play', 'sm')}继续` : `${ic('pause', 'sm')}暂停`;
+  pause.setAttribute('aria-label', speaker.state === 'paused' ? '继续' : '暂停');
+  $('#tts-rate').textContent = speaker.rate + '×';
+  if (!b) return;
+  if (R.mode === 'reflow') {
+    const el = body.querySelector(`[data-bid="${b.id}"]`);
+    if (el) {
+      if (ttsMark.id !== b.id) {
+        clearTtsMark(); el.classList.add('tts-on');
+        const top = el.getBoundingClientRect().top - body.getBoundingClientRect().top;
+        if (top < 8 || top > body.clientHeight * 0.62) body.scrollTop = Math.max(0, el.offsetTop - 12);
+      }
+      if (ttsMark.id !== b.id || ttsMark.sent !== sent) markSentence(el, sent);
+    }
+  } else if (R.pv && ttsMark.id !== b.id && b.y != null) R.pv.scrollToPt(b.page, b.y, 12);
+  ttsMark = { id: b.id, sent };
+}
+$('#tts-bar').onclick = e => {
+  const b = e.target.closest('[data-tts]'); if (!b || !speaker) return;
+  const k = b.dataset.tts;
+  if (k === 'prev' && !speaker.prev()) toast('已经是第一段');
+  if (k === 'next' && !speaker.next()) toast('已经是最后一段');
+  if (k === 'pause') speaker.toggle();
+  if (k === 'stop') speaker.stop();
+  if (k === 'rate') openRate();
+};

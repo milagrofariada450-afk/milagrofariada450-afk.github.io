@@ -42,6 +42,16 @@
       <div class="r-trans" id="r-trans"><span>翻译</span><div class="seg" id="trans-seg">
         <button data-t="off">原文</button><button data-t="tap">点按翻译</button><button data-t="bi">双语对照</button><button data-t="zh">仅译文</button></div></div>
       <div class="r-body" id="r-body" data-trans="off"></div>
+      <div class="tts-bar" id="tts-bar" hidden>
+        <div class="tts-line" id="tts-line"></div>
+        <div class="tts-ctl">
+          <button data-tts="prev" aria-label="上一段">上一段</button>
+          <button data-tts="pause" id="tts-pause" class="main" aria-label="暂停">暂停</button>
+          <button data-tts="next" aria-label="下一段">下一段</button>
+          <button data-tts="rate" id="tts-rate" aria-label="语速">1×</button>
+          <button data-tts="stop" aria-label="停止">停止</button>
+        </div>
+      </div>
       <div class="r-toolbar" id="r-toolbar"></div>
     </section>
   </div>
